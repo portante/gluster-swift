@@ -24,7 +24,6 @@ import shutil
 import tarfile
 import hashlib
 from time import time
-from swift.common.utils import normalize_timestamp
 from gluster.swift.common import utils
 import gluster.swift.common.Glusterfs
 from test_utils import _initxattr, _destroyxattr, _setxattr, _getxattr
@@ -54,8 +53,8 @@ def teardown():
 
 
 def timestamp_in_range(ts, base):
-    low = normalize_timestamp(base - 5)
-    high = normalize_timestamp(base + 5)
+    low = util.normalize_timestamp(base - 5)
+    high = utils.normalize_timestamp(base + 5)
     assert low <= ts, "timestamp %s is less than %s" % (ts, low)
     assert high >= ts, "timestamp %s is greater than %s" % (ts, high)
 
@@ -256,68 +255,68 @@ class TestDiskCommon(unittest.TestCase):
         _initxattr()
         self.fake_logger = FakeLogger()
         self.td = tempfile.mkdtemp()
-        self.fake_drives = []
+        self.fake_dev_paths = []
         self.fake_accounts = []
         for i in range(0,3):
-            self.fake_drives.append("drv%d" % i)
-            os.makedirs(os.path.join(self.td, self.fake_drives[i]))
-            self.fake_accounts.append(self.fake_drives[i])
+            fake_drive = "drv%d" % i
+            self.fake_accounts.append(fake_drive)
+            dev_path = os.path.join(self.td, fake_drive)
+            os.makedirs(dev_path)
+            self.fake_dev_paths.append(dev_path)
 
     def tearDown(self):
         _destroyxattr()
         shutil.rmtree(self.td)
 
     def test_constructor(self):
-        dc = dd.DiskCommon(self.td, self.fake_drives[0],
+        dc = dd.DiskCommon(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         assert dc.metadata == {}
         assert dc.db_file == dd._db_file
         assert dc.pending_timeout == 10
         assert dc.stale_reads_ok is False
-        assert dc.root == self.td
         assert dc.logger == self.fake_logger
         assert dc.account == self.fake_accounts[0]
-        assert dc.datadir == os.path.join(self.td, self.fake_drives[0])
+        assert dc.datadir == os.path.join(self.fake_dev_paths[0])
         assert dc._dir_exists is None
 
     def test__dir_exists_read_metadata_exists(self):
-        datadir = os.path.join(self.td, self.fake_drives[0])
+        datadir = os.path.join(self.fake_dev_paths[0])
         fake_md = { "fake": (True,0) }
         fake_md_p = pickle.dumps(fake_md, utils.PICKLE_PROTOCOL)
         _setxattr(datadir, utils.METADATA_KEY, fake_md_p)
-        dc = dd.DiskCommon(self.td, self.fake_drives[0],
+        dc = dd.DiskCommon(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         dc._dir_exists_read_metadata()
         assert dc.metadata == fake_md, repr(dc.metadata)
         assert dc.db_file == dd._db_file
         assert dc.pending_timeout == 10
         assert dc.stale_reads_ok is False
-        assert dc.root == self.td
         assert dc.logger == self.fake_logger
         assert dc.account == self.fake_accounts[0]
         assert dc.datadir == datadir
         assert dc._dir_exists is True
 
     def test__dir_exists_read_metadata_does_not_exist(self):
-        dc = dd.DiskCommon(self.td, "dne0", "dne0", self.fake_logger)
+        dev_path = os.path.join(self.td, "dne0")
+        dc = dd.DiskCommon(dev_path, "dne0", self.fake_logger)
         dc._dir_exists_read_metadata()
         assert dc.metadata == {}
         assert dc.db_file == dd._db_file
         assert dc.pending_timeout == 10
         assert dc.stale_reads_ok is False
-        assert dc.root == self.td
         assert dc.logger == self.fake_logger
         assert dc.account == "dne0"
-        assert dc.datadir == os.path.join(self.td, "dne0")
+        assert dc.datadir == dev_path
         assert dc._dir_exists is False
 
     def test_is_deleted(self):
-        dc = dd.DiskCommon(self.td, self.fake_drives[0],
+        dc = dd.DiskCommon(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         assert dc.is_deleted() == False
 
     def test_update_metadata(self):
-        dc = dd.DiskCommon(self.td, self.fake_drives[0],
+        dc = dd.DiskCommon(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         utils.create_container_metadata(dc.datadir)
         dc.metadata = dd._read_metadata(dc.datadir)
@@ -345,18 +344,18 @@ class TestDiskCommon(unittest.TestCase):
         assert dc.metadata == md_copy
 
     def test_empty_dir_is_not_empty(self):
-        dc = dd.DiskCommon(self.td, self.fake_drives[0],
+        dc = dd.DiskCommon(self.fake_dev_paths[0],
                     self.fake_accounts[0], self.fake_logger)
-        os.makedirs(os.path.join(self.td, self.fake_drives[0], 'aaabbbccc'))
+        os.makedirs(os.path.join(self.fake_dev_paths[0], 'aaabbbccc'))
         self.assertFalse(dc.empty())
 
     def test_empty_dir_is_empty(self):
-        dc = dd.DiskCommon(self.td, self.fake_drives[0],
+        dc = dd.DiskCommon(self.fake_dev_paths[0],
                     self.fake_accounts[0], self.fake_logger)
         self.assertTrue(dc.empty())
 
     def test_empty_dir_does_not_exist(self):
-        dc = dd.DiskCommon(self.td, 'non_existent_drive',
+        dc = dd.DiskCommon(os.path.join(self.td, 'non_existent_drive'),
                     self.fake_accounts[0], self.fake_logger)
         self.assertTrue(dc.empty())
 
@@ -369,12 +368,13 @@ class TestContainerBroker(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         super(TestContainerBroker, self).__init__(*args, **kwargs)
-        self.initial_ts = normalize_timestamp('1')
+        self.initial_ts = utils.normalize_timestamp('1')
 
     def setUp(self):
         _initxattr()
         self.path = tempfile.mkdtemp()
         self.drive = 'drv'
+        self.dev_path = os.path.join(self.path, self.drive)
         self.container = None
 
     def tearDown(self):
@@ -385,8 +385,8 @@ class TestContainerBroker(unittest.TestCase):
     def _get_broker(self, account=None, container=None):
         assert account is not None
         assert container is not None
-        self.container = os.path.join(self.path, self.drive, container)
-        return dd.DiskDir(self.path, self.drive, account=account,
+        self.container = os.path.join(self.dev_path, container)
+        return dd.DiskDir(self.dev_path, account=account,
                           container=container, logger=FakeLogger())
 
     def _create_file(self, p):
@@ -413,7 +413,7 @@ class TestContainerBroker(unittest.TestCase):
 
     def test_creation_existing(self):
         # Test swift.common.db.ContainerBroker.__init__
-        os.makedirs(os.path.join(self.path, self.drive, 'c'))
+        os.makedirs(os.path.join(self.dev_path, 'c'))
         broker = self._get_broker(account='a', container='c')
         self.assertEqual(broker.db_file, dd._db_file)
         self.assertEqual(os.path.basename(broker.db_file), 'db_file.db')
@@ -424,7 +424,7 @@ class TestContainerBroker(unittest.TestCase):
 
     def test_creation_existing_bad_metadata(self):
         # Test swift.common.db.ContainerBroker.__init__
-        container = os.path.join(self.path, self.drive, 'c')
+        container = os.path.join(self.dev_path, 'c')
         os.makedirs(container)
         utils.write_metadata(container, dict(a=1, b=2))
         broker = self._get_broker(account='a', container='c')
@@ -449,8 +449,9 @@ class TestContainerBroker(unittest.TestCase):
         broker = self._get_broker(account='a', container='c')
         broker.initialize(self.initial_ts)
         self.assert_(broker.empty())
-        broker.put_object('o', normalize_timestamp(time()), 0, 'text/plain',
-                          'd41d8cd98f00b204e9800998ecf8427e')
+        broker.put_object(
+            'o', utils.normalize_timestamp(time()), 0, 'text/plain',
+            'd41d8cd98f00b204e9800998ecf8427e')
         # put_object() should be a NOOP
         self.assert_(broker.empty())
 
@@ -460,7 +461,7 @@ class TestContainerBroker(unittest.TestCase):
         self.assert_(broker.empty())
         obj = self._create_file('o.txt')
         self.assert_(not broker.empty())
-        broker.delete_object('o', normalize_timestamp(time()))
+        broker.delete_object('o', utils.normalize_timestamp(time()))
         # delete_object() should be a NOOP
         self.assert_(not broker.empty())
         os.unlink(obj)
@@ -520,7 +521,7 @@ class TestContainerBroker(unittest.TestCase):
             __save_config
 
     def test_get_info_nonexistent_container(self):
-        broker = dd.DiskDir(self.path, self.drive, account='no_account',
+        broker = dd.DiskDir(self.dev_path, account='no_account',
                           container='no_container', logger=FakeLogger())
         info = broker.get_info()
 
@@ -911,14 +912,14 @@ class TestContainerBroker(unittest.TestCase):
         broker.initialize(self.initial_ts)
 
         # Add our first item
-        first_timestamp = normalize_timestamp(1)
+        first_timestamp = utils.normalize_timestamp(1)
         first_value = '1'
         broker.update_metadata({'First': [first_value, first_timestamp]})
         self.assert_('First' in broker.metadata)
         self.assertEquals(broker.metadata['First'],
                           [first_value, first_timestamp])
         # Add our second item
-        second_timestamp = normalize_timestamp(2)
+        second_timestamp = utils.normalize_timestamp(2)
         second_value = '2'
         broker.update_metadata({'Second': [second_value, second_timestamp]})
         self.assert_('First' in broker.metadata)
@@ -928,7 +929,7 @@ class TestContainerBroker(unittest.TestCase):
         self.assertEquals(broker.metadata['Second'],
                           [second_value, second_timestamp])
         # Update our first item
-        first_timestamp = normalize_timestamp(3)
+        first_timestamp = utils.normalize_timestamp(3)
         first_value = '1b'
         broker.update_metadata({'First': [first_value, first_timestamp]})
         self.assert_('First' in broker.metadata)
@@ -938,7 +939,7 @@ class TestContainerBroker(unittest.TestCase):
         self.assertEquals(broker.metadata['Second'],
                           [second_value, second_timestamp])
         # Delete our second item (by setting to empty string)
-        second_timestamp = normalize_timestamp(4)
+        second_timestamp = utils.normalize_timestamp(4)
         second_value = ''
         broker.update_metadata({'Second': [second_value, second_timestamp]})
         self.assert_('First' in broker.metadata)
@@ -956,7 +957,7 @@ class TestContainerBroker(unittest.TestCase):
         self.assertTrue(os.path.isdir(self.container))
         self.assertEquals(self.initial_ts, broker.metadata[utils.X_TIMESTAMP])
         self.assertFalse(broker.is_deleted())
-        broker.delete_db(normalize_timestamp(time()))
+        broker.delete_db(utils.normalize_timestamp(time()))
         self.assertTrue(broker.is_deleted())
 
 
@@ -968,7 +969,7 @@ class TestAccountBroker(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
         super(TestAccountBroker, self).__init__(*args, **kwargs)
-        self.initial_ts = normalize_timestamp('1')
+        self.initial_ts = utils.normalize_timestamp('1')
 
     def setUp(self):
         _initxattr()
@@ -986,7 +987,7 @@ class TestAccountBroker(unittest.TestCase):
     def _get_broker(self, account=None):
         assert account is not None
         self.account = account
-        return dd.DiskAccount(self.path, self.drive, account=account,
+        return dd.DiskAccount(self.drive_fullpath, account=account,
                               logger=FakeLogger())
 
     def _create_container(self, name):
@@ -1033,7 +1034,7 @@ class TestAccountBroker(unittest.TestCase):
         broker = self._get_broker(account='a')
         broker.initialize(self.initial_ts)
         self.assert_(broker.empty())
-        broker.put_container('c1', normalize_timestamp(time()), 0, 0, 0)
+        broker.put_container('c1', utils.normalize_timestamp(time()), 0, 0, 0)
         # put_container() should be a NOOP
         self.assert_(broker.empty())
 
@@ -1043,7 +1044,7 @@ class TestAccountBroker(unittest.TestCase):
         self.assert_(broker.empty())
         c1 = self._create_container('c1')
         self.assert_(not broker.empty())
-        broker.put_container('c1', 0, normalize_timestamp(time()), 0, 0)
+        broker.put_container('c1', 0, utils.normalize_timestamp(time()), 0, 0)
         # put_container() should be a NOOP
         self.assert_(not broker.empty())
         os.rmdir(c1)
@@ -1221,7 +1222,7 @@ class TestAccountBroker(unittest.TestCase):
         self.assertTrue(os.path.isdir(self.drive_fullpath))
         self.assertEquals(self.initial_ts, broker.metadata[utils.X_TIMESTAMP])
         self.assertFalse(broker.is_deleted())
-        broker.delete_db(normalize_timestamp(time()))
+        broker.delete_db(utils.normalize_timestamp(time()))
         # Deleting the "db" should be a NOOP
         self.assertFalse(broker.is_deleted())
 
@@ -1233,19 +1234,20 @@ class TestDiskAccount(unittest.TestCase):
         _initxattr()
         self.fake_logger = FakeLogger()
         self.td = tempfile.mkdtemp()
-        self.fake_drives = []
+        self.fake_dev_paths = []
         self.fake_accounts = []
         self.fake_md = []
         for i in range(0,3):
-            self.fake_drives.append("drv%d" % i)
-            os.makedirs(os.path.join(self.td, self.fake_drives[i]))
-            self.fake_accounts.append(self.fake_drives[i])
+            fake_drive = "drv%d" % i
+            self.fake_accounts.append(fake_drive)
+            datadir = os.path.join(self.td, fake_drive)
+            os.makedirs(datadir)
+            self.fake_dev_paths.append(datadir)
             if i == 0:
                 # First drive does not have any initial account metadata
                 continue
             if i == 1:
                 # Second drive has account metadata but it is not valid
-                datadir = os.path.join(self.td, self.fake_drives[i])
                 fake_md = { "fake-drv-%d" % i: (True,0) }
                 self.fake_md.append(fake_md)
                 fake_md_p = pickle.dumps(fake_md, utils.PICKLE_PROTOCOL)
@@ -1259,48 +1261,48 @@ class TestDiskAccount(unittest.TestCase):
         shutil.rmtree(self.td)
 
     def test_constructor_no_metadata(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         assert da._dir_exists is True
         ctime = os.path.getctime(da.datadir)
         mtime = os.path.getmtime(da.datadir)
         exp_md = {
             'X-Bytes-Used': (0, 0),
-            'X-Timestamp': (normalize_timestamp(ctime), 0),
+            'X-Timestamp': (utils.normalize_timestamp(ctime), 0),
             'X-Object-Count': (0, 0),
             'X-Type': ('Account', 0),
-            'X-PUT-Timestamp': (normalize_timestamp(mtime), 0),
+            'X-PUT-Timestamp': (utils.normalize_timestamp(mtime), 0),
             'X-Container-Count': (0, 0)}
         assert da.metadata == exp_md, repr(da.metadata)
 
     def test_constructor_metadata_not_valid(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[1],
+        da = dd.DiskAccount(self.fake_dev_paths[1],
                             self.fake_accounts[1], self.fake_logger)
         assert da._dir_exists is True
         ctime = os.path.getctime(da.datadir)
         mtime = os.path.getmtime(da.datadir)
         exp_md = {
             'X-Bytes-Used': (0, 0),
-            'X-Timestamp': (normalize_timestamp(ctime), 0),
+            'X-Timestamp': (utils.normalize_timestamp(ctime), 0),
             'X-Object-Count': (0, 0),
             'X-Type': ('Account', 0),
-            'X-PUT-Timestamp': (normalize_timestamp(mtime), 0),
+            'X-PUT-Timestamp': (utils.normalize_timestamp(mtime), 0),
             'X-Container-Count': (0, 0),
             'fake-drv-1': (True, 0)}
         assert da.metadata == exp_md, repr(da.metadata)
 
     def test_constructor_metadata_valid(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[2],
+        da = dd.DiskAccount(self.fake_dev_paths[2],
                             self.fake_accounts[2], self.fake_logger)
         assert da._dir_exists is True
         ctime = os.path.getctime(da.datadir)
         mtime = os.path.getmtime(da.datadir)
         exp_md = {
             'X-Bytes-Used': (0, 0),
-            'X-Timestamp': (normalize_timestamp(ctime), 0),
+            'X-Timestamp': (utils.normalize_timestamp(ctime), 0),
             'X-Object-Count': (0, 0),
             'X-Type': ('Account', 0),
-            'X-PUT-Timestamp': (normalize_timestamp(mtime), 0),
+            'X-PUT-Timestamp': (utils.normalize_timestamp(mtime), 0),
             'X-Container-Count': (0, 0)}
         assert da.metadata == exp_md, repr(da.metadata)
 
@@ -1309,7 +1311,7 @@ class TestDiskAccount(unittest.TestCase):
                         'object_count', 'bytes_used', 'hash', 'id'])
 
     def test_get_info_empty(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         data = da.get_info()
         assert set(data.keys()) == self.get_info_keys
@@ -1326,12 +1328,12 @@ class TestDiskAccount(unittest.TestCase):
     def test_get_info(self):
         tf = tarfile.open("common/data/account_tree.tar.bz2", "r:bz2")
         orig_cwd = os.getcwd()
-        os.chdir(os.path.join(self.td, self.fake_drives[0]))
+        os.chdir(os.path.join(self.fake_dev_paths[0]))
         try:
             tf.extractall()
         finally:
             os.chdir(orig_cwd)
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         data = da.get_info()
         assert set(data.keys()) == self.get_info_keys
@@ -1346,26 +1348,26 @@ class TestDiskAccount(unittest.TestCase):
         assert data['id'] == ''
 
     def test_update_put_timestamp_not_updated(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         da.update_put_timestamp('12345')
         assert da.metadata['X-PUT-Timestamp'][0] != '12345', repr(da.metadata)
 
     def test_update_put_timestamp_updated(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         exp_pts = str(float(da.metadata['X-PUT-Timestamp'][0]) + 100)
         da.update_put_timestamp(exp_pts)
         assert da.metadata['X-PUT-Timestamp'][0] == exp_pts, repr(da.metadata)
 
     def test_delete_db(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         assert da._dir_exists == True
         da.delete_db('12345')
         assert da._dir_exists == True
 
     def test_is_status_deleted(self):
-        da = dd.DiskAccount(self.td, self.fake_drives[0],
+        da = dd.DiskAccount(self.fake_dev_paths[0],
                             self.fake_accounts[0], self.fake_logger)
         assert da.is_status_deleted() == False

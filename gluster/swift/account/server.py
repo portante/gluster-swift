@@ -36,7 +36,10 @@ class AccountController(server.AccountController):
         :param account: account name
         :returns: DiskDir object
         """
-        return DiskAccount(self.root, drive, account, self.logger, **kwargs)
+        dev_path = self.devices.get_dev_path(drive)
+        if not dev_path:
+            return None
+        return DiskAccount(dev_path, account, self.logger, **kwargs)
 
 
 def app_factory(global_conf, **local_conf):

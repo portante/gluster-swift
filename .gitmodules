@@ -1,3 +1,6 @@
 [submodule "modules/swift"]
 	path = modules/swift
 	url = git://github.com/openstack/swift.git
+[submodule "modules/diskfile"]
+	path = modules/diskfile
+	url = git://github.com/portante/swift.git

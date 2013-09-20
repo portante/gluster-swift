@@ -150,7 +150,7 @@ class DiskCommon(object):
     """
     Common fields and methods shared between DiskDir and DiskAccount classes.
     """
-    def __init__(self, root, drive, account, logger, pending_timeout=None,
+    def __init__(self, dev_path, account, logger, pending_timeout=None,
                  stale_reads_ok=False):
         # WARNING: The following four fields are referenced as fields by our
         # callers outside of this module, do not remove.
@@ -165,11 +165,10 @@ class DiskCommon(object):
         self.pending_timeout = pending_timeout or 10
         self.stale_reads_ok = stale_reads_ok
         # The following fields are common
-        self.root = root
         assert logger is not None
         self.logger = logger
         self.account = account
-        self.datadir = os.path.join(root, drive)
+        self.datadir = dev_path
         self._dir_exists = None
 
     def _dir_exists_read_metadata(self):
@@ -209,8 +208,7 @@ class DiskDir(DiskCommon):
     """
     Manage object files on disk.
 
-    :param path: path to devices on the node
-    :param drive: gluster volume drive name
+    :param dev_path: path to device on this node
     :param account: account name for the object
     :param container: container name for the object
     :param logger: account or container server logging object
@@ -287,9 +285,9 @@ class DiskDir(DiskCommon):
             .update_metadata()
     """
 
-    def __init__(self, path, drive, account, container, logger,
+    def __init__(self, dev_path, account, container, logger,
                  uid=DEFAULT_UID, gid=DEFAULT_GID, **kwargs):
-        super(DiskDir, self).__init__(path, drive, account, logger, **kwargs)
+        super(DiskDir, self).__init__(dev_path, account, logger, **kwargs)
 
         self.uid = int(uid)
         self.gid = int(gid)
@@ -531,8 +529,8 @@ class DiskAccount(DiskCommon):
             .update_metadata()
     """
 
-    def __init__(self, root, drive, account, logger, **kwargs):
-        super(DiskAccount, self).__init__(root, drive, account, logger,
+    def __init__(self, dev_path, account, logger, **kwargs):
+        super(DiskAccount, self).__init__(dev_path, account, logger,
                                           **kwargs)
 
         # Since accounts should always exist (given an account maps to a

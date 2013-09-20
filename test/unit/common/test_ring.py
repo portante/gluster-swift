@@ -17,7 +17,7 @@ import os
 import errno
 import unittest
 import gluster.swift.common.constraints
-import swift.common.utils
+import swift.common.ondisk
 from gluster.swift.common.ring import Ring
 
 
@@ -25,7 +25,7 @@ class TestRing(unittest.TestCase):
     """ Tests for common.ring """
 
     def setUp(self):
-        swift.common.utils.HASH_PATH_SUFFIX = 'endcap'
+        swift.common.ondisk.HASH_PATH_SUFFIX = 'endcap'
         swiftdir = os.path.join(os.getcwd(), "common", "data")
         self.ring = Ring(swiftdir, ring_name='object')
 

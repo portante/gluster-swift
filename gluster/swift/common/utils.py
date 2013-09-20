@@ -17,14 +17,12 @@ import os
 import stat
 import errno
 import xattr
-import random
 import logging
 from hashlib import md5
 from eventlet import sleep
 import cPickle as pickle
-from swift.common.utils import normalize_timestamp
-from gluster.swift.common.fs_utils import do_rename, do_fsync, os_path, \
-    do_stat, do_listdir, do_walk, do_rmdir
+from gluster.swift.common.fs_utils import os_path, do_stat, do_listdir, \
+    do_walk, do_rmdir, do_fstat
 from gluster.swift.common import Glusterfs
 
 X_CONTENT_TYPE = 'Content-Type'
@@ -53,6 +51,21 @@ DEFAULT_UID = -1
 DEFAULT_GID = -1
 PICKLE_PROTOCOL = 2
 CHUNK_SIZE = 65536
+
+
+def normalize_timestamp(timestamp):
+    """
+    Format a timestamp (string or numeric) into a standardized
+    xxxxxxxxxx.xxxxx (10.5) format.
+
+    Note that timestamps using values greater than or equal to November 20th,
+    2286 at 17:46 UTC will use 11 digits to represent the number of
+    seconds.
+
+    :param timestamp: unix timestamp
+    :returns: normalized timestamp as a string
+    """
+    return "%016.05f" % (float(timestamp))
 
 
 class GlusterFileSystemOSError(OSError):
@@ -218,7 +231,6 @@ def validate_account(metadata):
 
 def validate_object(metadata):
     if not metadata:
-        logging.warn('validate_object: No metadata')
         return False
 
     if X_TIMESTAMP not in metadata.keys() or \
@@ -320,6 +332,23 @@ def get_account_details(acc_path):
     return container_list, container_count
 
 
+def _read_for_etag(fp):
+    etag = md5()
+    while True:
+        chunk = fp.read(CHUNK_SIZE)
+        if chunk:
+            etag.update(chunk)
+            if len(chunk) >= CHUNK_SIZE:
+                # It is likely that we have more data to be read from the
+                # file. Yield the co-routine cooperatively to avoid
+                # consuming the worker during md5sum() calculations on
+                # large files.
+                sleep()
+        else:
+            break
+    return etag.hexdigest()
+
+
 def _get_etag(path):
     """
     FIXME: It would be great to have a translator that returns the md5sum() of
@@ -328,28 +357,24 @@ def _get_etag(path):
     Since we don't have that we should yield after each chunk read and
     computed so that we don't consume the worker thread.
     """
-    etag = md5()
-    with open(path, 'rb') as fp:
-        while True:
-            chunk = fp.read(CHUNK_SIZE)
-            if chunk:
-                etag.update(chunk)
-                if len(chunk) >= CHUNK_SIZE:
-                    # It is likely that we have more data to be read from the
-                    # file. Yield the co-routine cooperatively to avoid
-                    # consuming the worker during md5sum() calculations on
-                    # large files.
-                    sleep()
-            else:
-                break
-    return etag.hexdigest()
+    if isinstance(path, int):
+        with os.fdopen(os.dup(path), 'rb') as fp:
+            etag = _read_for_etag(fp)
+        os.lseek(path, 0, os.SEEK_SET)
+    else:
+        with open(path, 'rb') as fp:
+            etag = _read_for_etag(fp)
+    return etag
 
 
 def get_object_metadata(obj_path):
     """
     Return metadata of object.
     """
-    stats = do_stat(obj_path)
+    if isinstance(obj_path, int):
+        stats = do_fstat(obj_path)
+    else:
+        stats = do_stat(obj_path)
     if not stats:
         metadata = {}
     else:
@@ -436,38 +461,6 @@ def create_account_metadata(acc_path):
     return rmd
 
 
-def write_pickle(obj, dest, tmp=None, pickle_protocol=0):
-    """
-    Ensure that a pickle file gets written to disk.  The file is first written
-    to a tmp file location in the destination directory path, ensured it is
-    synced to disk, then moved to its final destination name.
-
-    This version takes advantage of Gluster's dot-prefix-dot-suffix naming
-    where the a file named ".thefile.name.9a7aasv" is hashed to the same
-    Gluster node as "thefile.name". This ensures the renaming of a temp file
-    once written does not move it to another Gluster node.
-
-    :param obj: python object to be pickled
-    :param dest: path of final destination file
-    :param tmp: path to tmp to use, defaults to None (ignored)
-    :param pickle_protocol: protocol to pickle the obj with, defaults to 0
-    """
-    dirname = os.path.dirname(dest)
-    basename = os.path.basename(dest)
-    tmpname = '.' + basename + '.' + \
-        md5(basename + str(random.random())).hexdigest()
-    tmppath = os.path.join(dirname, tmpname)
-    with open(tmppath, 'wb') as fo:
-        pickle.dump(obj, fo, pickle_protocol)
-        # TODO: This flush() method call turns into a flush() system call
-        # We'll need to wrap this as well, but we would do this by writing
-        #a context manager for our own open() method which returns an object
-        # in fo which makes the gluster API call.
-        fo.flush()
-        do_fsync(fo)
-    do_rename(tmppath, dest)
-
-
 # The following dir_xxx calls should definitely be replaced
 # with a Metadata class to encapsulate their implementation.
 # :FIXME: For now we have them as functions, but we should
@@ -542,11 +535,3 @@ def rmobjdir(dir_path):
         raise
     else:
         return True
-
-
-# Over-ride Swift's utils.write_pickle with ours
-#
-# FIXME: Is this even invoked anymore given we don't perform container or
-# account updates?
-import swift.common.utils
-swift.common.utils.write_pickle = write_pickle

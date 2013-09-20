@@ -45,8 +45,10 @@ class ContainerController(server.ContainerController):
         :param container: container name
         :returns: DiskDir object, a duck-type of DatabaseBroker
         """
-        return DiskDir(self.root, drive, account, container, self.logger,
-                       **kwargs)
+        dev_path = self.devices.get_dev_path(drive)
+        if not dev_path:
+            return None
+        return DiskDir(dev_path, account, container, self.logger, **kwargs)
 
     def account_update(self, req, account, container, broker):
         """
